@@ -1,0 +1,30 @@
+[project]
+name = "apex-common"
+version = "0.1.0"
+description = "Infrastructure shared by the apex services: logging, paging, filename folding, document readiness."
+readme = "README.md"
+requires-python = ">=3.11,<4.0"
+# Deliberately minimal. This package must never depend on a service of ours —
+# see CLAUDE.md, "What belongs here". pydantic is here only because the paging
+# response model is a BaseModel the services return directly.
+dependencies = [
+    "pydantic (>=2.0,<3.0)",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest (>=8.0)",
+    "pytest-asyncio (>=0.23)",
+    "mongomock (>=4.1)",
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{ include = "apex_common", from = "src" }]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

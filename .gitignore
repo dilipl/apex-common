@@ -1,0 +1,8 @@
+src/apex_common/__pycache__/
+tests/__pycache__/
+__pycache__/
+*.pyc
+dist/
+.venv/
+*.egg-info/
+.pytest_cache/
