@@ -85,12 +85,23 @@ message. `install()` now runs the check **before** registering the loader, and
 `tests/test_auth.py` pins that a `RuntimeError` naming `COOKIE_SECURE` is what
 escapes.
 
-### Still deliberately NOT here
+## `gcp_preflight` — v0.3.0
 
-`auth_preflight.py` — 83 lines, byte-identical in both services, and a clean
-candidate. It is about **GCP** credentials (stale local impersonation configs),
-not user auth, so it does not belong in this subpackage. Worth moving, under
-its own name.
+The last duplicated module: byte-identical in **all three** services, which
+each called `verify_credentials()` at startup (hpe from its worker too).
+
+**Renamed on the way in.** It was `app/services/auth_preflight.py`, and it is
+about GOOGLE CLOUD credentials — a stale local `impersonated_service_account`
+snapshot — not about authenticating a user. Sitting beside the JWT code under
+an "auth" name is what kept that confusion alive, and it is why this did not
+go into `apex_common.auth`.
+
+Pure stdlib, so it is **core, not an extra**. `_FIX_SCRIPT` names a path inside
+task-service-agent on purpose: the script exists only there, and one run of it
+repairs the shared ADC snapshot every service reads.
+
+hpe was the only repo with a test for it (`test_auth_preflight.py`); that is
+now `tests/test_gcp_preflight.py` here, run once.
 
 ## Consuming it
 

@@ -1,6 +1,6 @@
 [project]
 name = "apex-common"
-version = "0.2.0"
+version = "0.3.0"
 description = "Infrastructure shared by the apex services: logging, paging, filename folding, document readiness."
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
