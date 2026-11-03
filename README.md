@@ -14,12 +14,14 @@ shared no library. One of them had already drifted silently (see
 | `pagination` | the five paging fields every list endpoint returns, a measured (never inferred) `has_more`, and bounded counting |
 | `title_norm` | the filename-folding rule `file_name_norm` is stored and searched by |
 | `doc_status` | maps raw processing rows to the readiness a user sees — "can I query this document yet" |
+| `auth` | register / login / refresh / logout, the JWT dependency, the user model, password hashing, and token revocation. An **extra**: `apex-common[auth]` |
 
 ## Install
 
 ```toml
 # pyproject.toml of a consuming service
-"apex-common @ git+https://github.com/dilipl/apex-common.git@v0.1.0",
+"apex-common @ git+https://github.com/dilipl/apex-common.git@v0.2.0",          # core
+"apex-common[auth] @ git+https://github.com/dilipl/apex-common.git@v0.2.0",   # with auth
 ```
 
 Pin a **tag, never a branch**: each service upgrades on its own schedule, so one

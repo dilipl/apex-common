@@ -32,20 +32,65 @@ Two rules, and the first is the one that matters:
    test — not "this looks reusable", which is how a shared-utils grab-bag
    starts.
 
-### Deliberately NOT here
+## `apex_common.auth` — v0.2.0
 
-`token_denylist.py` (JWT revocation) is code-identical in `ingestor-service` and
-`task-service-agent`, so it looks like the obvious fifth module. It fails rule
-1: it reaches into `app.database.get_database()` and
-`app.config.get_settings().refresh_token_expires_in`, both lazily inside
-functions. Admitting it needs those injected first — a `configure(...)` call at
-startup, or both passed per call.
+The whole auth surface, not just the denylist. The two services held ~394 code
+lines each, **~94% identical**: `register` / `login` / `refresh` / `logout` were
+byte-identical logic differing only in import ORDER. They are two JWT REALMS
+over one `users` collection, differing in exactly two settings —
+`cookie_prefix` and `jwt_secret_key`.
 
-That refactor is deliberately **not** bundled with the extraction: it changes
-the shape of a security-sensitive module that both services import, so both
-would have to move together, and a logout path that behaves differently in two
-services mid-rollout is the wrong thing to have in flight. Do it as its own
-change, with both suites green before and after.
+It is an **optional extra** (`apex-common[auth]`), because
+heavy-processing-engine is a private Pub/Sub worker with no authentication and
+must not pull fastapi and bcrypt in to format logs.
+
+**This package does not import `fastapi_jwt_auth`.** The consumer passes its
+`AuthJWT` class into `install()`. The service keeps ownership of that
+dependency's version — it is a git dependency pinned upstream to HEAD, which is
+not a risk a shared library should carry on a consumer's behalf.
+
+`install()` registers PROCESS-GLOBAL state on the `AuthJWT` class (its config
+loader and denylist loader), because that is the only interface the library
+offers. Call it once, from the module that owns a service's auth.
+
+**What stays with the service:** its `AuthConfig`, its collections, and any
+dependency that reads its own records — `require_project_member`,
+`require_project_owner`. A service's `app/auth/oauth2.py` becomes ~100 lines of
+wiring that re-exports the rest, so its routers do not change.
+
+### Three drifts the copies had already grown
+
+Fixed in place before extraction, so neither copy's bug was shipped to both:
+
+| | |
+|---|---|
+| a stray `print(error)` | in one service's auth exception path, bypassing JSON logging |
+| `"User no longer exist"` | one 401 message, two spellings |
+| `TWELVE HOURS` | a docstring describing the *other* service's refresh-token life, wrong — both set 43200 minutes |
+
+The third is the shape that matters: a duplicated file whose comment
+confidently describes its twin, incorrectly, about how long a leaked
+credential lives.
+
+### And one the extraction itself found
+
+The cookie-policy guard — `SameSite=None` without `Secure` — was raised from
+**inside** `AuthJWT.load_config`'s callback. That method wraps its callback in
+`except Exception: raise TypeError("Config must be pydantic 'BaseSettings' or
+list of tuple")`, so the message never reached anyone: a misconfigured
+deployment got a complaint about the config object's TYPE, not about the cookie
+settings that were wrong. Both services shipped it that way, which defeated the
+entire purpose of a guard whose job is to turn a mystifying outage into a
+message. `install()` now runs the check **before** registering the loader, and
+`tests/test_auth.py` pins that a `RuntimeError` naming `COOKIE_SECURE` is what
+escapes.
+
+### Still deliberately NOT here
+
+`auth_preflight.py` — 83 lines, byte-identical in both services, and a clean
+candidate. It is about **GCP** credentials (stale local impersonation configs),
+not user auth, so it does not belong in this subpackage. Worth moving, under
+its own name.
 
 ## Consuming it
 

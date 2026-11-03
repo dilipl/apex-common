@@ -6,4 +6,4 @@ re-export surface would make every consumer import pydantic and the logging
 machinery to use one regex, and it hides which module owns a name.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

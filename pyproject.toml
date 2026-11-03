@@ -1,6 +1,6 @@
 [project]
 name = "apex-common"
-version = "0.1.0"
+version = "0.2.0"
 description = "Infrastructure shared by the apex services: logging, paging, filename folding, document readiness."
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
@@ -12,10 +12,24 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Auth is an EXTRA, not a core dependency: heavy-processing-engine is a private
+# Pub/Sub worker with no authentication of its own, and it uses this package for
+# log formatting and paging. It must not drag fastapi and bcrypt in for that.
+#
+# fastapi-jwt-auth is deliberately ABSENT — the consumer passes its AuthJWT
+# class into apex_common.auth.install(), so the service keeps ownership of that
+# dependency's version. It is a git dependency pinned upstream to HEAD, which is
+# not a risk a shared library should own on a consumer's behalf.
+auth = [
+    "fastapi (>=0.100)",
+    "bcrypt (>=4.0.0)",
+    "pymongo (>=4.0)",
+]
 dev = [
     "pytest (>=8.0)",
     "pytest-asyncio (>=0.23)",
     "mongomock (>=4.1)",
+    "httpx (>=0.27)",
 ]
 
 [build-system]
