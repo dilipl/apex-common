@@ -68,10 +68,22 @@ WORKING = "working"
 FAILED = "failed"
 UNKNOWN = "unknown"
 
-# hpe's vocabulary, mapped to the three answers a reader needs. Listed
-# explicitly rather than matched by prefix so a NEW status hpe introduces lands
-# in `unknown` — visible and harmless — instead of being silently guessed at.
-_READY_STATUSES = frozenset({"completed"})
+# hpe's vocabulary (plus `stored`, see below), mapped to the three answers a
+# reader needs. Listed explicitly rather than matched by prefix so a NEW status
+# hpe introduces lands in `unknown` — visible and harmless — instead of being
+# silently guessed at.
+#
+# `stored` is written by INGESTOR, not by hpe, and only in a deployment running
+# with VECTORIZE_ENABLED=false — no queue, no worker, no vectors. It means "the
+# body is stored and findable by text search; there was never going to be a
+# vector". It maps to READY because the reader's question is unchanged — can I
+# use this yet — and the answer is yes, immediately.
+#
+# It is a NEW VALUE rather than reusing `completed` on purpose. `completed`
+# means "has vectors, retrievable by semantic search"; writing it with no
+# vectors would make the badge a lie and mislead the next person to read the
+# collection. The distinct value keeps WHY recoverable from the row itself.
+_READY_STATUSES = frozenset({"completed", "stored"})
 _FAILED_STATUSES = frozenset({"failed", "failed_embedding"})
 _WORKING_STATUSES = frozenset({
     "queued", "processing", "extraction_started", "extraction_completed",
@@ -83,11 +95,13 @@ _WORKING_STATUSES = frozenset({
 # how long we give the worker to write its first row.
 NO_STATUS_GRACE_MINUTES = 20
 
-# Bump ONLY when the MAPPING changes — not when a comment does. The paired
-# contract test in the other repo asserts this same value, so a one-sided edit
-# to the rule fails both suites instead of silently giving one service a
-# different opinion about whether a document is usable.
-DOC_STATUS_CONTRACT = "2026-10-21"
+# Bump ONLY when the MAPPING changes — not when a comment does. The contract
+# test asserts this value, so changing the rule without acknowledging it fails
+# the suite. Before this package existed the mapping was copied per repo and
+# this constant was mirrored in each; now there is one definition, and the
+# constant records WHICH VERSION of the rule a consumer's stored data and
+# cached UI were written under.
+DOC_STATUS_CONTRACT = "2026-11-05"
 
 
 def _age_minutes(created_at: Any) -> Optional[float]:

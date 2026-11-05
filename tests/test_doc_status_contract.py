@@ -14,10 +14,10 @@ WHY A TEST AND NOT JUST A COMMENT
     against a document retrieval cannot see, which is the worst failure shape
     in this system: a fluent, correctly-cited answer to a different question.
 
-    The fixture table below is IDENTICAL in both repos. Editing one service's
-    mapping fails that service's suite, with this file naming the other one.
-    The repos share no library — the same constraint as observability.py,
-    pagination.py and title_norm.py.
+    The fixture table below was once duplicated per repo, with this file
+    naming the other copy. It is now the ONE table, and each consumer keeps a
+    guard asserting it defines no mapping of its own — re-adding a local copy
+    is the failure this package exists to prevent.
 """
 
 from __future__ import annotations
@@ -37,18 +37,24 @@ from apex_common.doc_status import (
     is_pollable,
 )
 
-OTHER_SERVICE = "ingestor-service/app/services/doc_status.py"
-
 # ---------------------------------------------------------------------------
-# THE CONTRACT TABLE — identical in both repos. Change it in both, or not at all.
+# THE CONTRACT TABLE — the one definition. Every consumer reads this mapping.
 #
 # The left column is heavy-processing-engine's vocabulary (ProcessingStatus in
-# status_tracker.py). hpe owns those names; both readers must agree on what
-# they mean for "can I use this".
+# status_tracker.py) plus `stored`, which INGESTOR writes when a deployment
+# runs with no worker at all. hpe owns the rest of those names; every reader
+# must agree on what they mean for "can I use this".
 # ---------------------------------------------------------------------------
 CASES: list[tuple[str | None, str]] = [
     # The only status that means there are vectors.
     ("completed", READY),
+    # READY WITHOUT VECTORS. Written by ingestor, not hpe, in a deployment
+    # running VECTORIZE_ENABLED=false: the body is stored and findable by text
+    # search, and there was never going to be a vector. The reader's question
+    # is still "can I use this yet", and the answer is yes — so READY, with the
+    # distinct value keeping WHY recoverable from the row.
+    ("stored", READY),
+    ("  Stored  ", READY),
     # On its way.
     ("queued", WORKING),
     ("processing", WORKING),
@@ -94,9 +100,10 @@ def test_the_contract_identifier_is_pinned():
     If this fails, the mapping changed. Update the table in BOTH repos and bump
     the constant in both, then re-run both suites.
     """
-    assert DOC_STATUS_CONTRACT == "2026-10-21", (
-        "The readiness mapping changed. Mirror it in "
-        f"{OTHER_SERVICE} and bump DOC_STATUS_CONTRACT in both."
+    assert DOC_STATUS_CONTRACT == "2026-11-05", (
+        "The readiness mapping changed. Update the table above, bump the "
+        "constant, and check every consumer's STORED data was written under "
+        "the rule it now reads."
     )
 
 

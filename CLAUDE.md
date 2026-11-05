@@ -103,6 +103,64 @@ repairs the shared ADC snapshot every service reads.
 hpe was the only repo with a test for it (`test_auth_preflight.py`); that is
 now `tests/test_gcp_preflight.py` here, run once.
 
+## `apex_common.email` — v0.4.0
+
+The transport, not the message. ingestor-service emails a note or a transcript
+a user asked for; task-service-agent emails a digest it generated. How mail
+leaves the building is infrastructure; subject lines and layout are domain and
+stay in each service.
+
+**No vendor, and no dependency.** Every hosted provider speaks SMTP and
+`smtplib` is stdlib, so this module has no dependency and therefore **no
+optional extra** — unlike `auth`. A provider's REST client later is what would
+need one, and the `Mailer` protocol is what makes that a new class rather than
+a change at the call sites.
+
+**It raises; it does not swallow.** `send` raises `EmailError` and each caller
+decides what that means, because the right answer differs: a user waiting for
+"email me this entry" must see a failure as a failure, while a digest loop must
+log one bad address and continue. A library that logged-and-returned makes the
+first case impossible — and this codebase has already paid for a
+degrade-silently default, when output bodies written only to object storage set
+`body_key = ""` on failure while the row still said `completed`, and two
+reports were lost without a trace.
+
+**Unconfigured is `None`, not a mailer that fails.** `get_mailer` returns None
+when `MAIL_PROVIDER` is blank, so a service MOUNTS its "email this" route only
+when it can actually send — the same principle the agent catalogue applies, and
+it means the frontend discovers what exists instead of offering a button that
+500s. A MISSPELLED provider, by contrast, **raises**: falling back to disabled
+would deploy a service that quietly never emails anybody.
+
+Misconfiguration raises from the CONSTRUCTOR, so a bad deployment fails at
+startup in front of an operator rather than at 3am on the first digest — the
+same reasoning as `auth`'s cookie-policy check.
+
+`console` logs the message instead of sending it, for local work on a template
+without SMTP credentials. It applies the same header rules as SMTP, so an
+injection cannot pass in the environment where it is hardest to notice.
+
+**Header injection is refused, not stripped.** A subject is often built from
+user text (an entry title, a filename); a newline in a header value appends
+headers of the caller's choosing. Rejected with `EmailError` rather than
+silently rewritten, and bodies are unrestricted — a diary entry is full of
+newlines and may well contain the word `Bcc`.
+
+## `doc_status` gained `stored` — v0.4.0
+
+Written by **ingestor**, not hpe, and only where `VECTORIZE_ENABLED=false`: no
+queue, no worker, no vectors. It maps to **READY**, because the reader's
+question is unchanged — can I use this yet — and the answer is yes immediately.
+
+A new value rather than reusing `completed` on purpose: `completed` means "has
+vectors, retrievable by semantic search", so writing it with none would make
+the badge a lie and mislead the next person to read the collection. The
+distinct value keeps WHY recoverable from the row itself.
+
+`DOC_STATUS_CONTRACT` moved to `2026-11-05`. Nothing in the three services pins
+that constant, so the bump is contained here — but it is what tells you which
+version of the rule a consumer's STORED data was written under.
+
 ## Consuming it
 
 ```toml

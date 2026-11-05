@@ -1,7 +1,7 @@
 [project]
 name = "apex-common"
-version = "0.3.0"
-description = "Infrastructure shared by the apex services: logging, paging, filename folding, document readiness."
+version = "0.4.0"
+description = "Infrastructure shared by the apex services: logging, paging, filename folding, document readiness, auth, mail."
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
 # Deliberately minimal. This package must never depend on a service of ours —
