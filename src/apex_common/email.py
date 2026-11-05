@@ -56,6 +56,7 @@ from typing import Optional, Protocol, Sequence, runtime_checkable
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "Attachment",
     "EmailConfig",
     "EmailError",
     "Mailer",
@@ -76,8 +77,35 @@ PROVIDERS = ("smtp", "console")
 _FORBIDDEN_IN_HEADER = ("\r", "\n")
 
 
+# Messages past this are refused rather than handed to the provider, which
+# would accept them and bounce later — a failure the user never sees. Most
+# providers cap a message between 10 and 25 MB, and base64 inflates the
+# payload by about a third, so the limit is on the ENCODED size.
+DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+
+
 class EmailError(RuntimeError):
     """A message could not be sent. The caller decides whether that is fatal."""
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """A file to send with the message.
+
+    `filename` is what the recipient sees and is validated, not sanitised: it
+    reaches a header, and it reaches the recipient's filesystem when they save
+    it. A path separator or a newline in it is either an injection or a
+    mistake, and quietly rewriting someone's filename is its own surprise.
+    """
+
+    filename: str
+    content: bytes
+    content_type: str = "application/octet-stream"
+
+    def parts(self) -> tuple[str, str]:
+        """(maintype, subtype), which is how EmailMessage wants it."""
+        main, _, sub = self.content_type.partition("/")
+        return (main or "application", sub or "octet-stream")
 
 
 @dataclass(frozen=True)
@@ -101,6 +129,9 @@ class EmailConfig:
     # capture server (MailHog and friends), which speaks no TLS at all.
     starttls: bool = True
     timeout_s: float = 10.0
+    # 0 disables the check. Not recommended: the provider's own refusal
+    # arrives as a bounce the user never sees.
+    max_bytes: int = DEFAULT_MAX_BYTES
 
 
 @runtime_checkable
@@ -115,6 +146,7 @@ class Mailer(Protocol):
         text: str,
         html: Optional[str] = None,
         reply_to: Optional[str] = None,
+        attachments: Sequence[Attachment] = (),
     ) -> None: ...
 
 
@@ -142,6 +174,24 @@ def _check_subject(subject: str) -> str:
     return subject
 
 
+def _check_attachments(attachments: Sequence[Attachment]) -> list[Attachment]:
+    out = []
+    for att in attachments:
+        name = (att.filename or "").strip()
+        if not name:
+            raise EmailError("Attachment has no filename")
+        if any(ch in name for ch in _FORBIDDEN_IN_HEADER):
+            raise EmailError("Attachment filename contains a line break")
+        # A separator would make the saved file land somewhere the recipient
+        # did not choose, and "../" in a filename is never an accident.
+        if "/" in name or "\\" in name:
+            raise EmailError("Attachment filename contains a path separator")
+        if not att.content:
+            raise EmailError(f"Attachment {name!r} is empty")
+        out.append(att)
+    return out
+
+
 def _build(
     config: EmailConfig,
     *,
@@ -150,6 +200,7 @@ def _build(
     text: str,
     html: Optional[str],
     reply_to: Optional[str],
+    attachments: Sequence[Attachment] = (),
 ) -> EmailMessage:
     """The message itself, identical whatever carries it.
 
@@ -171,6 +222,24 @@ def _build(
     msg.set_content(text)
     if html:
         msg.add_alternative(html, subtype="html")
+    for att in _check_attachments(attachments):
+        main, sub = att.parts()
+        msg.add_attachment(
+            att.content, maintype=main, subtype=sub, filename=att.filename
+        )
+
+    # CHECKED ON THE ENCODED MESSAGE, not on the raw bytes: base64 inflates an
+    # attachment by about a third, so a 9 MB PDF is an 12 MB message. Refused
+    # here rather than handed to the provider, which would accept it and bounce
+    # later — a failure the person who clicked never sees.
+    if config.max_bytes:
+        size = len(msg.as_bytes())
+        if size > config.max_bytes:
+            raise EmailError(
+                f"Message is {size} bytes encoded; the limit is "
+                f"{config.max_bytes}. Send a link instead of the file, or "
+                "raise MAIL_MAX_BYTES."
+            )
     return msg
 
 
@@ -196,14 +265,16 @@ class ConsoleMailer:
         text: str,
         html: Optional[str] = None,
         reply_to: Optional[str] = None,
+        attachments: Sequence[Attachment] = (),
     ) -> None:
         msg = _build(
             self._config, to=to, subject=subject, text=text, html=html,
-            reply_to=reply_to,
+            reply_to=reply_to, attachments=attachments,
         )
         logger.info(
-            "mail (console) to=%s subject=%s bytes=%d",
+            "mail (console) to=%s subject=%s bytes=%d attachments=%s",
             msg["To"], msg["Subject"], len(text),
+            [a.filename for a in attachments] or "none",
         )
 
 
@@ -236,10 +307,12 @@ class SmtpMailer:
         text: str,
         html: Optional[str] = None,
         reply_to: Optional[str] = None,
+        attachments: Sequence[Attachment] = (),
     ) -> None:
         cfg = self._config
         msg = _build(
-            cfg, to=to, subject=subject, text=text, html=html, reply_to=reply_to
+            cfg, to=to, subject=subject, text=text, html=html,
+            reply_to=reply_to, attachments=attachments,
         )
         try:
             with smtplib.SMTP(cfg.host, cfg.port, timeout=cfg.timeout_s) as smtp:

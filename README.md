@@ -16,14 +16,14 @@ shared no library. One of them had already drifted silently (see
 | `doc_status` | maps raw processing rows to the readiness a user sees — "can I query this document yet" |
 | `auth` | register / login / refresh / logout, the JWT dependency, the user model, password hashing, and token revocation. An **extra**: `apex-common[auth]` |
 | `gcp_preflight` | fails fast with an actionable message when local GCP credentials are stale (inert on Cloud Run) |
-| `email` | SMTP submission behind a `Mailer` protocol. Stdlib only, so **no extra and no dependency**; unconfigured returns `None` rather than a mailer that fails |
+| `email` | SMTP submission behind a `Mailer` protocol, with attachments. Stdlib only, so **no extra and no dependency**; unconfigured returns `None` rather than a mailer that fails |
 
 ## Install
 
 ```toml
 # pyproject.toml of a consuming service
-"apex-common @ git+https://github.com/dilipl/apex-common.git@v0.4.0",          # core
-"apex-common[auth] @ git+https://github.com/dilipl/apex-common.git@v0.4.0",   # with auth
+"apex-common @ git+https://github.com/dilipl/apex-common.git@v0.5.0",          # core
+"apex-common[auth] @ git+https://github.com/dilipl/apex-common.git@v0.5.0",   # with auth
 ```
 
 Pin a **tag, never a branch**: each service upgrades on its own schedule, so one

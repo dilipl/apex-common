@@ -103,7 +103,7 @@ repairs the shared ADC snapshot every service reads.
 hpe was the only repo with a test for it (`test_auth_preflight.py`); that is
 now `tests/test_gcp_preflight.py` here, run once.
 
-## `apex_common.email` — v0.4.0
+## `apex_common.email` — v0.4.0, attachments in v0.5.0
 
 The transport, not the message. ingestor-service emails a note or a transcript
 a user asked for; task-service-agent emails a digest it generated. How mail
@@ -139,6 +139,17 @@ same reasoning as `auth`'s cookie-policy check.
 `console` logs the message instead of sending it, for local work on a template
 without SMTP credentials. It applies the same header rules as SMTP, so an
 injection cannot pass in the environment where it is hardest to notice.
+
+**Attachments (v0.5.0).** `Attachment(filename, content, content_type)`, because
+"email me this output" means the file — the PDF renderer already produces one
+for every kind. The filename is **validated, not sanitised**: it reaches a
+header AND the recipient's filesystem, so a path separator or a newline is
+refused rather than quietly rewritten, and an empty attachment is refused
+because a zero-byte PDF means the render produced nothing and sending it tells
+the user their output is empty. The size cap (`max_bytes`, 10 MB) is checked on
+the **ENCODED** message, since base64 inflates a file by about a third — capping
+the raw bytes would let through a message the provider accepts and then bounces,
+which is a failure the person who clicked never sees.
 
 **Header injection is refused, not stripped.** A subject is often built from
 user text (an entry title, a filename); a newline in a header value appends

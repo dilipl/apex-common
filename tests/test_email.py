@@ -367,3 +367,158 @@ class TestConsoleMailer:
             mailer.send(to=["x@y.z"], subject="s\nBcc: q@r.s", text="t")
         with pytest.raises(EmailError, match="No recipient"):
             mailer.send(to=[], subject="s", text="t")
+
+
+# ── Attachments ───────────────────────────────────────────────────────────────
+
+from apex_common.email import DEFAULT_MAX_BYTES, Attachment  # noqa: E402
+
+
+class TestAttachments:
+    """"Email me this output" means the file, so the transport has to carry
+    one. The guards here are about the filename and the size, because both
+    reach somewhere outside this process: the filename reaches a header AND the
+    recipient's filesystem, and the size reaches a provider that will accept an
+    oversized message and bounce it later — a failure the person who clicked
+    never sees."""
+
+    def _pdf(self, size=20):
+        return Attachment("report.pdf", b"%PDF-1.4" + b"x" * size, "application/pdf")
+
+    def test_the_file_is_attached_with_its_type_and_name(self, smtp):
+        get_mailer(_cfg()).send(
+            to=["a@b.c"], subject="s", text="t", attachments=[self._pdf()]
+        )
+        msg = _last(smtp)
+        parts = [p for p in msg.walk() if p.get_filename()]
+        assert [p.get_filename() for p in parts] == ["report.pdf"]
+        assert parts[0].get_content_type() == "application/pdf"
+        assert parts[0].get_payload(decode=True).startswith(b"%PDF-1.4")
+
+    def test_both_the_body_and_the_file_are_present(self, smtp):
+        get_mailer(_cfg()).send(
+            to=["a@b.c"], subject="s", text="the digest in words",
+            attachments=[self._pdf()],
+        )
+        msg = _last(smtp)
+        bodies = [
+            p.get_content() for p in msg.walk()
+            if p.get_content_type() == "text/plain" and not p.get_filename()
+        ]
+        assert any("the digest in words" in b for b in bodies)
+        assert any(p.get_filename() for p in msg.walk())
+
+    def test_several_attachments(self, smtp):
+        get_mailer(_cfg()).send(
+            to=["a@b.c"], subject="s", text="t",
+            attachments=[self._pdf(), Attachment("data.csv", b"a,b\n1,2", "text/csv")],
+        )
+        names = [p.get_filename() for p in _last(smtp).walk() if p.get_filename()]
+        assert names == ["report.pdf", "data.csv"]
+
+    def test_no_attachments_is_the_old_behaviour(self, smtp):
+        """The parameter is optional, so every existing caller is unchanged."""
+        get_mailer(_cfg()).send(to=["a@b.c"], subject="s", text="t")
+        assert not any(p.get_filename() for p in _last(smtp).walk())
+
+    def test_an_unknown_content_type_still_sends(self, smtp):
+        get_mailer(_cfg()).send(
+            to=["a@b.c"], subject="s", text="t",
+            attachments=[Attachment("thing.bin", b"\x00\x01")],
+        )
+        part = next(p for p in _last(smtp).walk() if p.get_filename())
+        assert part.get_content_type() == "application/octet-stream"
+
+    def test_a_malformed_content_type_does_not_crash(self, smtp):
+        get_mailer(_cfg()).send(
+            to=["a@b.c"], subject="s", text="t",
+            attachments=[Attachment("x.dat", b"x", "nonsense")],
+        )
+        part = next(p for p in _last(smtp).walk() if p.get_filename())
+        assert part.get_content_type() == "nonsense/octet-stream"
+
+    # ── the filename is validated, not sanitised ─────────────────────────────
+
+    @pytest.mark.parametrize("name", [
+        "../../etc/passwd", "reports/q3.pdf", "a\\b.pdf",
+    ])
+    def test_a_path_separator_is_refused(self, smtp, name):
+        """It reaches the recipient's filesystem when they save it, and "../"
+        in a filename is never an accident."""
+        with pytest.raises(EmailError, match="path separator"):
+            get_mailer(_cfg()).send(
+                to=["a@b.c"], subject="s", text="t",
+                attachments=[Attachment(name, b"x")],
+            )
+        assert not smtp.instances
+
+    def test_a_newline_in_the_filename_is_refused(self, smtp):
+        with pytest.raises(EmailError, match="line break"):
+            get_mailer(_cfg()).send(
+                to=["a@b.c"], subject="s", text="t",
+                attachments=[Attachment("a\nBcc: q@r.s.pdf", b"x")],
+            )
+        assert not smtp.instances
+
+    def test_a_missing_filename_is_refused(self, smtp):
+        for name in ("", "   "):
+            with pytest.raises(EmailError, match="no filename"):
+                get_mailer(_cfg()).send(
+                    to=["a@b.c"], subject="s", text="t",
+                    attachments=[Attachment(name, b"x")],
+                )
+        assert not smtp.instances
+
+    def test_an_empty_attachment_is_refused(self, smtp):
+        """A zero-byte PDF means the render produced nothing. Sending it tells
+        the user their output is empty, which is a different claim."""
+        with pytest.raises(EmailError, match="is empty"):
+            get_mailer(_cfg()).send(
+                to=["a@b.c"], subject="s", text="t",
+                attachments=[Attachment("report.pdf", b"")],
+            )
+        assert not smtp.instances
+
+    # ── the size cap ─────────────────────────────────────────────────────────
+
+    def test_an_oversized_message_is_refused_before_sending(self, smtp):
+        with pytest.raises(EmailError) as e:
+            get_mailer(_cfg(max_bytes=500)).send(
+                to=["a@b.c"], subject="s", text="t",
+                attachments=[Attachment("big.pdf", b"x" * 5000)],
+            )
+        assert "limit is 500" in str(e.value)
+        assert "MAIL_MAX_BYTES" in str(e.value)
+        assert not smtp.instances, "nothing may leave"
+
+    def test_the_cap_is_on_the_ENCODED_size(self, smtp):
+        """base64 inflates by about a third, so a 9 MB file is a 12 MB message.
+        Capping the raw bytes would let a message through that the provider
+        then bounces."""
+        raw = 400
+        with pytest.raises(EmailError) as e:
+            get_mailer(_cfg(max_bytes=raw + 100)).send(
+                to=["a@b.c"], subject="s", text="t",
+                attachments=[Attachment("big.pdf", b"x" * raw)],
+            )
+        reported = int(str(e.value).split()[2])
+        assert reported > raw, "the encoded message must be larger than the file"
+
+    def test_a_zero_cap_disables_the_check(self, smtp):
+        get_mailer(_cfg(max_bytes=0)).send(
+            to=["a@b.c"], subject="s", text="t",
+            attachments=[Attachment("big.pdf", b"x" * 100_000)],
+        )
+        assert smtp.instances
+
+    def test_the_default_cap_is_ten_megabytes(self):
+        assert DEFAULT_MAX_BYTES == 10 * 1024 * 1024
+        assert EmailConfig().max_bytes == DEFAULT_MAX_BYTES
+
+    def test_console_applies_the_same_rules(self):
+        """Choosing console for local development must not let through what
+        production refuses."""
+        mailer = get_mailer(EmailConfig(provider="console", from_address="a@b.c"))
+        with pytest.raises(EmailError, match="path separator"):
+            mailer.send(to=["x@y.z"], subject="s", text="t",
+                        attachments=[Attachment("../x.pdf", b"x")])
